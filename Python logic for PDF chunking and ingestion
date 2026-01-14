@@ -1,0 +1,144 @@
+import os
+import re
+from typing import List, Dict
+from uuid import uuid4
+
+import PyPDF2
+from elasticsearch import Elasticsearch, helpers
+from sentence_transformers import SentenceTransformer
+
+ES_HOST = os.getenv("ES_HOST", "http://localhost:9200")
+ES_USER = os.getenv("ES_USER", "elastic")
+ES_PASS = os.getenv("ES_PASS", "changeme")
+INDEX_NAME = "aviation_manuals"
+
+# 1) Connect to Elasticsearch
+es = Elasticsearch(ES_HOST, basic_auth=(ES_USER, ES_PASS), verify_certs=False)
+
+# 2) Create index with mappings for hybrid search
+def create_index():
+    if es.indices.exists(index=INDEX_NAME):
+        return
+    es.indices.create(
+        index=INDEX_NAME,
+        body={
+            "settings": {
+                "number_of_shards": 1,
+                "number_of_replicas": 0
+            },
+            "mappings": {
+                "properties": {
+                    "content": { "type": "text" },
+                    "section": { "type": "text" },
+                    "chapter": { "type": "text" },
+                    "part_number": { "type": "keyword" },
+                    "manual_id": { "type": "keyword" },
+                    "page": { "type": "integer" },
+                    "embedding": { "type": "dense_vector", "dims": 384, "index": True, "similarity": "cosine" }
+                }
+            }
+        }
+    )
+
+# 3) PDF parsing and chunking
+def extract_text_by_page(pdf_path: str) -> List[Dict]:
+    docs = []
+    with open(pdf_path, "rb") as f:
+        reader = PyPDF2.PdfReader(f)
+        for i, page in enumerate(reader.pages, start=1):
+            text = page.extract_text() or ""
+            # Normalize whitespace
+            text = re.sub(r"\s+", " ", text).strip()
+            docs.append({"page": i, "text": text})
+    return docs
+
+def chunk_text(text: str, max_tokens: int = 800, overlap: int = 120) -> List[str]:
+    # Approximate tokens by words; tune for your LLM/embedding model
+    words = text.split()
+    chunks = []
+    start = 0
+    while start < len(words):
+        end = min(start + max_tokens, len(words))
+        chunk = " ".join(words[start:end])
+        chunks.append(chunk)
+        start = max(0, end - overlap)
+    return [c for c in chunks if len(c) > 50]  # filter tiny fragments
+
+# 4) Metadata extraction (simple heuristics; replace with your manual’s structure)
+def infer_section(text: str) -> str:
+    m = re.search(r"(SECTION\s+\d+[\.\d]*\s*[:\-]\s*[A-Z][A-Za-z0-9\-\s]+)", text, re.IGNORECASE)
+    return m.group(1) if m else ""
+
+def infer_chapter(text: str) -> str:
+    m = re.search(r"(ATA\s*Chapter\s*\d{2})", text, re.IGNORECASE)
+    return m.group(1) if m else ""
+
+def infer_part_number(text: str) -> str:
+    m = re.search(r"\b([A-Z]{2,}-\d{2,}[A-Z0-9\-]*)\b", text)
+    return m.group(1) if m else ""
+
+# 5) Embedding model
+model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+# 6) Indexing pipeline
+def index_pdf(pdf_path: str, manual_id: str):
+    create_index()
+    pages = extract_text_by_page(pdf_path)
+    actions = []
+    for p in pages:
+        section = infer_section(p["text"])
+        chapter = infer_chapter(p["text"])
+        part_number = infer_part_number(p["text"])
+
+        for chunk in chunk_text(p["text"], max_tokens=800, overlap=120):
+            vec = model.encode(chunk, normalize_embeddings=True).tolist()
+            doc = {
+                "_index": INDEX_NAME,
+                "_id": str(uuid4()),
+                "_source": {
+                    "content": chunk,
+                    "section": section,
+                    "chapter": chapter,
+                    "part_number": part_number,
+                    "manual_id": manual_id,
+                    "page": p["page"],
+                    "embedding": vec
+                }
+            }
+            actions.append(doc)
+
+    helpers.bulk(es, actions)
+    print(f"Indexed {len(actions)} chunks from {pdf_path}")
+
+# 7) Query helper (hybrid)
+def hybrid_search(query_text: str, k: int = 10):
+    qvec = model.encode(query_text, normalize_embeddings=True).tolist()
+    resp = es.search(
+        index=INDEX_NAME,
+        size=k,
+        knn={
+            "field": "embedding",
+            "query_vector": qvec,
+            "k": 100,
+            "num_candidates": 1000
+        },
+        query={
+            "bool": {
+                "should": [
+                    {"match": {"content": query_text}},
+                    {"match_phrase": {"content": query_text}}
+                ],
+                "minimum_should_match": 1
+            }
+        },
+        _source=["content", "page", "section", "chapter", "manual_id", "part_number"]
+    )
+    return resp["hits"]["hits"]
+
+if __name__ == "__main__":
+    # Example usage
+    index_pdf("open_apu_manual.pdf", manual_id="APU_OPEN_001")
+    results = hybrid_search("How do I reset the APU after a master warning?")
+    for r in results:
+        src = r["_source"]
+        print(f"[p.{src['page']}] {src.get('section','')} — {src['content'][:180]}...")

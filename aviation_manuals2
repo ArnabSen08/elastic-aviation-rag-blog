@@ -1,0 +1,43 @@
+POST aviation_manuals/_search
+{
+  "size": 10,
+  "rank": {
+    "rrf": {
+      "window_size": 100,
+      "rank_constant": 60
+    }
+  },
+  "queries": [
+    {
+      "query": {
+        "bool": {
+          "should": [
+            { "match": { "content": "How do I reset the APU after a master warning?" } },
+            { "match_phrase": { "content": "APU master warning reset" } }
+          ],
+          "minimum_should_match": 1
+        }
+      }
+    },
+    {
+      "knn": {
+        "field": "embedding",
+        "query_vector": [/* 384-dim vector */],
+        "k": 100,
+        "num_candidates": 1000
+      }
+    },
+    {
+      "query": {
+        "bool": {
+          "should": [
+            { "term": { "part_number.keyword": "APU-MSTR-RESET" } },
+            { "match": { "section": "APU—Warnings and Resets" } }
+          ],
+          "minimum_should_match": 1
+        }
+      }
+    }
+  ],
+  "_source": ["content", "page", "section", "manual_id", "part_number"]
+}

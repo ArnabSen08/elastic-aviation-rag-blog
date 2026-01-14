@@ -1,0 +1,26 @@
+POST aviation_manuals/_search
+{
+  "size": 10,
+  "knn": {
+    "field": "embedding",
+    "query_vector": [/* 384-dim vector from all-MiniLM-L6-v2 */],
+    "k": 100,
+    "num_candidates": 1000
+  },
+  "query": {
+    "bool": {
+      "should": [
+        { "match": { "content": "reset APU master warning" } },
+        { "match_phrase": { "content": "APU reset procedure" } },
+        { "term": { "part_number.keyword": "APU-MSTR-RESET" } }
+      ],
+      "minimum_should_match": 1
+    }
+  },
+  "_source": ["content", "page", "section", "manual_id", "part_number"],
+  "highlight": {
+    "fields": {
+      "content": { "fragment_size": 180, "number_of_fragments": 2 }
+    }
+  }
+}
