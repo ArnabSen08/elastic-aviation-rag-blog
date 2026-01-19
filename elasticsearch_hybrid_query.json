@@ -1,8 +1,99 @@
 {
-  "description": "Hybrid Search Query with BM25 + Vector Search + RRF for Aviation Manuals",
-  "query": {
-    "POST": "aviation_manuals/_search",
-    "body": {
+  "description": "Production-ready Elasticsearch Hybrid Search Query for Aviation Maintenance Manuals",
+  "ready_to_paste_query": {
+    "size": 10,
+    "rank": {
+      "rrf": {
+        "window_size": 100,
+        "rank_constant": 60
+      }
+    },
+    "sub_searches": [
+      {
+        "query": {
+          "bool": {
+            "should": [
+              {
+                "multi_match": {
+                  "query": "{{SEARCH_QUERY}}",
+                  "fields": ["content^2", "section^1.5", "title^1.8"],
+                  "type": "best_fields",
+                  "boost": 1.0
+                }
+              },
+              {
+                "match_phrase": {
+                  "content": {
+                    "query": "{{SEARCH_QUERY}}",
+                    "boost": 1.5,
+                    "slop": 2
+                  }
+                }
+              }
+            ],
+            "minimum_should_match": 1
+          }
+        }
+      },
+      {
+        "query": {
+          "knn": {
+            "field": "embedding",
+            "query_vector": "{{384_DIM_VECTOR}}",
+            "k": 100,
+            "num_candidates": 1000,
+            "boost": 2.0
+          }
+        }
+      },
+      {
+        "query": {
+          "bool": {
+            "should": [
+              {
+                "wildcard": {
+                  "part_number": {
+                    "value": "*{{PART_SEARCH}}*",
+                    "boost": 2.5
+                  }
+                }
+              },
+              {
+                "match": {
+                  "section": {
+                    "query": "{{SEARCH_QUERY}}",
+                    "boost": 1.3
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "_source": [
+      "content",
+      "page", 
+      "section",
+      "part_number"
+    ],
+    "highlight": {
+      "fields": {
+        "content": {
+          "fragment_size": 200,
+          "number_of_fragments": 3,
+          "pre_tags": ["<mark>"],
+          "post_tags": ["</mark>"]
+        },
+        "section": {
+          "fragment_size": 100,
+          "number_of_fragments": 1
+        }
+      }
+    }
+  },
+  "example_queries": {
+    "apu_reset_example": {
       "size": 10,
       "rank": {
         "rrf": {
@@ -16,18 +107,19 @@
             "bool": {
               "should": [
                 {
-                  "match": {
-                    "content": {
-                      "query": "How do I reset the APU after a master warning?",
-                      "boost": 1.0
-                    }
+                  "multi_match": {
+                    "query": "APU master warning reset procedure",
+                    "fields": ["content^2", "section^1.5", "title^1.8"],
+                    "type": "best_fields",
+                    "boost": 1.0
                   }
                 },
                 {
                   "match_phrase": {
                     "content": {
                       "query": "APU master warning reset",
-                      "boost": 1.5
+                      "boost": 1.5,
+                      "slop": 2
                     }
                   }
                 }
@@ -40,7 +132,7 @@
           "query": {
             "knn": {
               "field": "embedding",
-              "query_vector": "<384-dimensional vector from all-MiniLM-L6-v2>",
+              "query_vector": [0.1, -0.2, 0.05, 0.8],
               "k": 100,
               "num_candidates": 1000,
               "boost": 2.0
@@ -52,18 +144,110 @@
             "bool": {
               "should": [
                 {
-                  "term": {
+                  "wildcard": {
                     "part_number": {
-                      "value": "APU-MSTR-RESET",
-                      "boost": 2.0
+                      "value": "*APU*",
+                      "boost": 2.5
                     }
                   }
                 },
                 {
                   "match": {
                     "section": {
-                      "query": "APU Warnings and Resets",
-                      "boost": 1.2
+                      "query": "APU warnings emergency procedures",
+                      "boost": 1.3
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "_source": [
+        "content",
+        "page",
+        "section", 
+        "part_number"
+      ],
+      "highlight": {
+        "fields": {
+          "content": {
+            "fragment_size": 200,
+            "number_of_fragments": 3,
+            "pre_tags": ["<mark>"],
+            "post_tags": ["</mark>"]
+          },
+          "section": {
+            "fragment_size": 100,
+            "number_of_fragments": 1
+          }
+        }
+      }
+    },
+    "hydraulic_system_example": {
+      "size": 15,
+      "rank": {
+        "rrf": {
+          "window_size": 150,
+          "rank_constant": 40
+        }
+      },
+      "sub_searches": [
+        {
+          "query": {
+            "bool": {
+              "should": [
+                {
+                  "multi_match": {
+                    "query": "hydraulic system pressure loss troubleshooting",
+                    "fields": ["content^2", "section^1.5", "title^1.8"],
+                    "type": "best_fields",
+                    "boost": 1.0
+                  }
+                },
+                {
+                  "match_phrase": {
+                    "content": {
+                      "query": "hydraulic pressure loss",
+                      "boost": 1.5,
+                      "slop": 2
+                    }
+                  }
+                }
+              ],
+              "minimum_should_match": 1
+            }
+          }
+        },
+        {
+          "query": {
+            "knn": {
+              "field": "embedding", 
+              "query_vector": [0.3, -0.1, 0.7, 0.2],
+              "k": 150,
+              "num_candidates": 1500,
+              "boost": 2.0
+            }
+          }
+        },
+        {
+          "query": {
+            "bool": {
+              "should": [
+                {
+                  "wildcard": {
+                    "part_number": {
+                      "value": "*HYD*",
+                      "boost": 2.5
+                    }
+                  }
+                },
+                {
+                  "match": {
+                    "section": {
+                      "query": "hydraulic systems maintenance",
+                      "boost": 1.3
                     }
                   }
                 }
@@ -76,32 +260,31 @@
         "content",
         "page",
         "section",
-        "part_number",
-        "manual_id",
-        "chapter"
-      ],
-      "highlight": {
-        "fields": {
-          "content": {
-            "fragment_size": 180,
-            "number_of_fragments": 2,
-            "pre_tags": ["<mark>"],
-            "post_tags": ["</mark>"]
-          }
-        }
-      }
+        "part_number"
+      ]
     }
   },
-  "explanation": {
-    "rrf": "Reciprocal Rank Fusion combines rankings from BM25, vector search, and metadata filters",
-    "window_size": "Top 100 results from each sub-search are considered for fusion",
-    "rank_constant": "Controls the weight distribution (60 is balanced)",
-    "boost_values": {
-      "match_phrase": 1.5,
-      "knn": 2.0,
-      "part_number": 2.0,
-      "section": 1.2
+  "configuration_notes": {
+    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2 (384 dimensions)",
+    "rrf_explanation": "Reciprocal Rank Fusion combines BM25 keyword search, vector similarity, and metadata matching",
+    "tuning_parameters": {
+      "window_size": "Number of top results from each sub-search to consider (100-150 recommended)",
+      "rank_constant": "Controls fusion weighting (40-80 range, lower = more aggressive fusion)",
+      "boost_values": {
+        "content": "2.0 - Primary content field",
+        "section": "1.5 - Section titles",
+        "title": "1.8 - Document titles", 
+        "knn": "2.0 - Vector search results",
+        "part_number": "2.5 - Exact part matches"
+      }
     },
-    "embedding_model": "sentence-transformers/all-MiniLM-L6-v2 (384 dimensions)"
+    "field_requirements": {
+      "content": "Main text content (analyzed)",
+      "embedding": "384-dim dense vector field",
+      "section": "Section/chapter names (analyzed)",
+      "part_number": "Part numbers (keyword field)",
+      "page": "Page numbers (integer)",
+      "title": "Document/section titles (analyzed)"
+    }
   }
 }
